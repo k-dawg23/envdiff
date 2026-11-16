@@ -1,0 +1,10 @@
+# Local environment files; fixtures contain synthetic data only.
+.env
+.env.*
+*.env
+!testdata/**/*.env
+# Go build and test artifacts
+/envdiff
+*.test
+*.out
+coverage.*
