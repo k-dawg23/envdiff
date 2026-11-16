@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,3 +137,35 @@ func TestSyntheticFixtures(t *testing.T) {
 		}
 	}
 }
+
+func TestStage2RegressionEdges(t *testing.T) {
+	cases := []struct {
+		name, input string
+		kind        Kind
+	}{
+		{"repeated BOM", "\xef\xbb\xbf\xef\xbb\xbfA=x", ErrKey},
+		{"even backslashes", "A=\"x\\\\\"", ""},
+		{"odd backslashes", "A=\"x\\\\\\\"", ErrQuote},
+		{"ASCII valid boundaries", "A=1\nZ=1\na=1\nz=1\n_=1\nA0=1\nA9=1", ""},
+		{"digit first", "0A=1", ErrKey}, {"punctuation", "A-1=1", ErrKey}, {"non ASCII", "é=1", ErrKey},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(c.input), Reference)
+			if c.kind == "" && err != nil {
+				t.Fatal("unexpected error")
+			}
+			if c.kind != "" && !IsKind(err, c.kind) {
+				t.Fatal("unexpected error kind")
+			}
+		})
+	}
+	_, err := Parse(io.MultiReader(strings.NewReader("A=x\n"), stage2ErrorReader{}), Reference)
+	if !IsKind(err, ErrRead) {
+		t.Fatal("partial read error not propagated safely")
+	}
+}
+
+type stage2ErrorReader struct{}
+
+func (stage2ErrorReader) Read([]byte) (int, error) { return 0, errors.New("synthetic private error") }

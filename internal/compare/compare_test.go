@@ -62,3 +62,11 @@ func TestSelfComparisonWithDuplicates(t *testing.T) {
 		t.Fatal("incorrect self comparison")
 	}
 }
+
+func TestUnsortedDuplicateLines(t *testing.T) {
+	f := &parser.File{Keys: map[string][]parser.Occurrence{"A": {{Line: 9}, {Line: 2}, {Line: 5}}}}
+	got := Compare(f, &parser.File{Keys: map[string][]parser.Occurrence{}}, false)
+	if len(got.Duplicates) != 1 || !reflect.DeepEqual(got.Duplicates[0].Lines, []int{2, 5, 9}) {
+		t.Fatal("duplicate lines not sorted")
+	}
+}
