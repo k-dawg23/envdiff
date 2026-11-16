@@ -1,33 +1,130 @@
 # EnvDiff
 
-EnvDiff compares two local dotenv files and reports key names and structural differences without displaying configuration values. The first file is the reference; keys found only there are missing, and keys found only in the target are additional.
+EnvDiff compares two local dotenv files without displaying their values. Use it to check whether a local configuration has the keys and values expected by an example configuration, or to detect configuration drift in CI. The first file is the **reference**; keys found only there are missing, and keys found only in the second, **target** file are additional.
 
-Requires Go 1.26. Build locally with `go build -o envdiff ./cmd/envdiff`. Release builds can embed a version with `go build -ldflags '-X main.version=1.0.0' -o envdiff ./cmd/envdiff`; otherwise the version is `dev`.
+## Installation
+
+Version 1.0.0 is planned and release archives are not yet available. Once published, download the archive for your platform from [GitHub Releases](https://github.com/k-dawg23/envdiff/releases), verify it against the published `SHA256SUMS`, and extract it. The archive will contain the executable and MIT licence. Run `./envdiff` on Linux or macOS, or `.\envdiff.exe` in PowerShell, from the directory containing the executable. Alternatively, put the executable in a directory on your `PATH` and invoke it as `envdiff`. Running a compiled executable does not require Go.
+
+The planned initial targets are Linux amd64, Windows amd64 and macOS arm64. macOS amd64 is omitted because native verification is unavailable. Native hosted CI has passed automated tests and builds on the three planned platforms; release archives and their verification remain pending. See [the CI run](https://github.com/k-dawg23/envdiff/actions/runs/43889121549).
+
+### Build from source
+
+Building requires Go 1.26. From the repository root, run:
 
 ```sh
-envdiff compare example.env local.env
-envdiff compare --format json example.env local.env --ignore-values
-envdiff compare -- --reference.env target.env
+# Linux and macOS
+go build -o envdiff ./cmd/envdiff
+./envdiff --version
+```
+
+```powershell
+# Windows PowerShell
+go build -o envdiff.exe ./cmd/envdiff
+.\envdiff.exe --version
+```
+
+A normal source build reports `envdiff dev`. To embed the planned release version, add `-ldflags '-X main.version=1.0.0'` to the build command. Place the resulting executable on `PATH` if desired.
+
+## Quick start
+
+Create these two synthetic files in your current directory:
+
+`reference.env`:
+
+```dotenv
+PORT=3000
+API_KEY=example
+SHARED=one
+```
+
+`target.env`:
+
+```dotenv
+PORT="3000"
+DEBUG=true
+SHARED=two
+```
+
+With a locally built executable, run `./envdiff compare reference.env target.env` (PowerShell: `.\envdiff.exe compare reference.env target.env`). The following exact output is from a development build; a version-injected release build displays its version in the first line:
+
+```text
+EnvDiff dev
+Mode: keys_and_values
+Reference: reference
+Target: target
+
+Missing keys: 1
+Additional keys: 1
+Different values: 1
+Duplicate keys: 0
+
+Missing:
+  API_KEY
+Additional:
+  DEBUG
+Different:
+  SHARED
+Duplicates:
+  (none)
+
+Result: Differences detected
+```
+
+Run `./envdiff compare --format=json reference.env target.env` (use `.\envdiff.exe` in PowerShell) for this complete output:
+
+```json
+{"schema_version":"1.0","status":"differences","mode":"keys_and_values","summary":{"missing":1,"additional":1,"different":1,"duplicates":0},"missing":["API_KEY"],"additional":["DEBUG"],"different":["SHARED"],"duplicates":[]}
+```
+
+Both commands exit 1 because differences were found. `PORT` is equivalent after parsing. All values above are fictitious.
+
+## CLI
+
+The examples below assume `envdiff` is on `PATH`; otherwise use the current-directory invocation above.
+
+```text
+envdiff compare [options] <reference> <target>
 envdiff --help
 envdiff compare --help
 envdiff --version
 ```
 
-`--format text|json` (or `--format=json`) selects output; text is the default. `--ignore-values` compares key sets without comparing values, but still fully validates both files. Compare options can appear before, between or after the two paths. `--` ends option parsing. Options cannot be repeated. Help and version are standalone commands.
+- `--format text` or `--format json` selects the report; `--format=json` also works. Text is the default.
+- `--ignore-values` compares keys only; both files are still parsed and validated, and duplicates are still reported. The different category is empty.
+- Options can appear before, between or after paths. `--` ends option parsing, so subsequent arguments are literal paths, including names beginning with `-`: `envdiff compare -- --reference.env target.env`.
+- Exactly two paths are required. Unknown or repeated options, missing option values, unsupported formats and ambiguous help/version combinations are errors. Help and version are standalone invocations.
 
-Reports use file roles rather than paths, sorted key names, category counts, duplicate occurrence lines and a final status. JSON uses schema version `1.0` and empty arrays for empty categories. Duplicates are reported for each file and take precedence over ordinary differences; duplicated values are not compared. Reports go to stdout; errors go to stderr. If an output write fails, partial stdout may already have been written.
+Key lists are sorted in ASCII order; duplicate entries are sorted by key, then reference before target. Shared values are compared exactly after parsing, case-sensitively and without Unicode normalization. For each duplicated key in each file, the report lists all physical occurrence lines. Duplicated values are not compared; unrelated keys still are. A duplicated key present in only one file is also missing or additional. Counts are numbers of report entries.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Identical in the selected mode |
+| 0 | No differences in the selected mode |
 | 1 | Differences |
-| 2 | Usage, input, parsing or output error |
-| 3 | Duplicate keys (complete report is still produced) |
+| 2 | Usage, input, parsing, execution or output error |
+| 3 | Duplicates detected; complete report produced |
 
-Input must be a readable regular UTF-8 file of at most 10 MiB. Symlinks to regular files are accepted. LF and CRLF, an optional initial UTF-8 BOM, blank lines, comments, `export KEY=value`, and single- or double-quoted values are supported. Keys use ASCII letters, digits and underscores, with a letter or underscore first. Double quotes decode `\"`, `\\`, `\n`, `\r` and `\t`; unknown escapes stay literal. Unquoted inline comments start at a `#` preceded by space or tab. No shell evaluation, interpolation or physical multiline values are supported.
+Precedence is 2 > 3 > 1 > 0. Reports for 0, 1 and 3 go to stdout with empty stderr; errors go to stderr with empty stdout before output begins. If an output write fails, partial stdout may already have been written. JSON reports contain one object and a newline, including empty arrays for empty categories. Diagnostics use file roles and line numbers where applicable, not paths or raw input.
 
-For example, `PORT=3000` and `PORT="3000"` compare equally. All examples are synthetic.
+## Supported dotenv syntax
 
-EnvDiff reads files without modifying them and does not output values, paths, hashes or raw input lines. Key names, duplicate line numbers and comparison outcomes can themselves reveal information. Values are held in process memory; this does not protect against OS inspection, swap, crash dumps or a hostile host, and memory is not securely erased. Files should be in trusted directories: a hostile actor replacing a file between the file-type check and open can cause unexpected behaviour, including blocking on a FIFO.
+- Inputs must be readable regular UTF-8 files, at most 10 MiB (10,485,760 bytes) each, including line endings and any BOM. Symlinks to regular files are accepted. Empty files, an optional initial UTF-8 BOM, LF or CRLF and a missing final newline are supported. Invalid UTF-8, NUL bytes and standalone carriage returns are rejected. Directories, devices and pipes are rejected.
+- Blank lines and lines whose first non-space/tab character is `#` are ignored. Physical line numbers start at 1 and include blank and comment lines. Syntax whitespace means ASCII space or tab.
+- Assignments optionally start with lowercase `export` followed by one or more spaces/tabs. Split at the first `=`; spaces/tabs around the key are trimmed. Keys match `[A-Za-z_][A-Za-z0-9_]*` and are case-sensitive. Bare keys are invalid.
+- After `=`, leading spaces/tabs are skipped to determine whether a value is quoted. Unquoted values are trimmed of surrounding spaces/tabs. An unquoted `#` starts a comment only when immediately preceded by a space/tab in the original value portion: `KEY=#abc` contains `#abc`, while `KEY= #abc` is empty. Internal whitespace, backslashes, extra `=` and later quote characters remain literal.
+- Single quotes preserve their contents literally; the first subsequent single quote closes the value. Double quotes decode `\"`, `\\`, `\n`, `\r` and `\t`; unknown escapes stay literal. After a closing quote, only spaces/tabs and an optional `#` comment preceded by at least one space/tab are allowed. Adjacent text or `#`, concatenated quoted segments and unterminated quotes are errors.
+- Physical multiline values, shell evaluation, variable interpolation, command substitution and environment lookup are unsupported. An escaped newline in a double-quoted value is supported. Empty values are valid.
 
-Run `go test ./...` to test. Linux is the currently verified platform; native Windows and macOS verification remains outstanding. MIT licence, copyright (c) 2026 Kenneth Rough.
+## Security and limitations
+
+EnvDiff does not modify its input files, access the network or persist configuration values. Reports and diagnostics do not emit values, paths, hashes or raw input lines. A value that is also a valid key name can appear in its role as a key. Key names, duplicate line numbers and comparison outcomes can themselves reveal sensitive information.
+
+Values are held in process memory and are not securely erased. This application-level guarantee does not protect against OS inspection, swap, crash dumps or a hostile host. Use trusted directories: hostile concurrent replacement between the file-type check and opening a file can cause unexpected behaviour, including blocking on a FIFO.
+
+## Development and contributions
+
+With Go 1.26 installed, run `go test ./...` from the repository root. Before submitting changes, format Go code with `gofmt`, run `go vet ./...` and the tests, and use only synthetic fixtures. Contributions can be proposed through GitHub issues and pull requests; describe the change and its verification. The project uses only the Go standard library.
+
+## Licence
+
+[MIT](LICENSE), copyright © 2026 Kenneth Rough.
