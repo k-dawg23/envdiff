@@ -15,7 +15,7 @@ import (
 
 func remediationBinary(t *testing.T) string {
 	t.Helper()
-	exe := filepath.Join(t.TempDir(), "envdiff")
+	exe := testExecutablePath(t.TempDir())
 	if b, e := exec.Command("go", "build", "-o", exe, ".").CombinedOutput(); e != nil {
 		t.Fatalf("build failed: %v %s", e, b)
 	}

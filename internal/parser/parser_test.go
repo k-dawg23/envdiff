@@ -104,12 +104,15 @@ func TestReadFile(t *testing.T) {
 	if !IsKind(err, ErrRead) || strings.Contains(err.Error(), "SECRET_SENTINEL") {
 		t.Fatal("unsafe reader error")
 	}
-	link := filepath.Join(dir, "link")
-	if err = os.Symlink(path, link); err == nil {
-		if _, err = ReadFile(link, Reference); err != nil {
+	t.Run("symlink to regular file", func(t *testing.T) {
+		link := filepath.Join(dir, "link")
+		if err := os.Symlink(path, link); err != nil {
+			t.Skipf("symlink creation unavailable: %v", err)
+		}
+		if _, err := ReadFile(link, Reference); err != nil {
 			t.Fatal("symlink to regular file rejected")
 		}
-	}
+	})
 }
 
 func TestSyntheticFixtures(t *testing.T) {

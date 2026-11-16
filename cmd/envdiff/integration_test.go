@@ -6,13 +6,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+func testExecutablePath(dir string) string {
+	name := "envdiff"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
+}
+
 func TestCompiledCLI(t *testing.T) {
 	dir := t.TempDir()
-	exe := filepath.Join(dir, "envdiff")
+	exe := testExecutablePath(dir)
 	build := exec.Command("go", "build", "-o", exe, ".")
 	if b, e := build.CombinedOutput(); e != nil {
 		t.Fatalf("build: %v %s", e, b)
@@ -127,7 +136,7 @@ func TestCompiledCLI(t *testing.T) {
 
 func TestCompiledInputBoundaries(t *testing.T) {
 	dir := t.TempDir()
-	exe := filepath.Join(dir, "envdiff")
+	exe := testExecutablePath(dir)
 	if b, e := exec.Command("go", "build", "-o", exe, ".").CombinedOutput(); e != nil {
 		t.Fatalf("build: %v %s", e, b)
 	}
