@@ -109,10 +109,14 @@ func Parse(r io.Reader, role Role) (*File, error) {
 		data = data[3:]
 	}
 	result := &File{Keys: make(map[string][]Occurrence)}
-	lines := bytes.Split(data, []byte{'\n'})
-	for i, line := range lines {
-		number := i + 1
-		if bytes.HasSuffix(line, []byte{'\r'}) && i < len(lines)-1 {
+	for number := 1; ; number++ {
+		end := bytes.IndexByte(data, '\n')
+		line := data
+		if end >= 0 {
+			line = data[:end]
+			data = data[end+1:]
+		}
+		if bytes.HasSuffix(line, []byte{'\r'}) && end >= 0 {
 			line = line[:len(line)-1]
 		}
 		if bytes.IndexByte(line, 0) >= 0 {
@@ -123,6 +127,9 @@ func Parse(r io.Reader, role Role) (*File, error) {
 		}
 		s := strings.TrimLeft(string(line), " \t")
 		if s == "" || s[0] == '#' {
+			if end < 0 {
+				break
+			}
 			continue
 		}
 		if strings.HasPrefix(s, "export") && len(s) > 6 && (s[6] == ' ' || s[6] == '\t') {
@@ -141,6 +148,9 @@ func Parse(r io.Reader, role Role) (*File, error) {
 			return nil, failure(k, role, number)
 		}
 		result.Keys[key] = append(result.Keys[key], Occurrence{Value: value, Line: number})
+		if end < 0 {
+			break
+		}
 	}
 	return result, nil
 }

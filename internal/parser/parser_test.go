@@ -169,3 +169,37 @@ func TestStage2RegressionEdges(t *testing.T) {
 type stage2ErrorReader struct{}
 
 func (stage2ErrorReader) Read([]byte) (int, error) { return 0, errors.New("synthetic private error") }
+
+func TestLineIterationBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, input string
+		kind        Kind
+		line        int
+	}{
+		{"empty", "", "", 0},
+		{"trailing newline", "A=x\r\n\n", "", 0},
+		{"final comment", "A=x\n# comment", "", 0},
+		{"final CR", "A=x\r\n\n# comment\r", ErrCarriageReturn, 3},
+		{"embedded CR", "\nA=x\r\r\n", ErrCarriageReturn, 2},
+		{"NUL after blank lines", "\n\r\n\x00", ErrNUL, 3},
+		{"unterminated quote after CRLF", "# comment\r\n\r\nA=\"x", ErrQuote, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(tc.input), Target)
+			if tc.kind == "" {
+				if err != nil {
+					t.Fatal("unexpected parse error")
+				}
+				return
+			}
+			var pe *Error
+			if !errors.As(err, &pe) || pe.Kind != tc.kind || pe.Line != tc.line || pe.Role != Target {
+				t.Fatal("incorrect structured error")
+			}
+		})
+	}
+	f, err := Parse(strings.NewReader("\r\nA=one\n# comment\r\nA=two"), Reference)
+	if err != nil || len(f.Keys["A"]) != 2 || f.Keys["A"][0].Line != 2 || f.Keys["A"][1].Line != 4 {
+		t.Fatal("incorrect duplicate line numbers")
+	}
+}
