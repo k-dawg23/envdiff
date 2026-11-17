@@ -4,9 +4,33 @@ EnvDiff compares two local dotenv files without displaying their values. Use it 
 
 ## Installation
 
-Version 1.0.0 is planned and release archives are not yet available. Once published, download the archive for your platform from [GitHub Releases](https://github.com/k-dawg23/envdiff/releases), verify it against the published `SHA256SUMS`, and extract it. The archive will contain the executable and MIT licence. Run `./envdiff` on Linux or macOS, or `.\envdiff.exe` in PowerShell, from the directory containing the executable. Alternatively, put the executable in a directory on your `PATH` and invoke it as `envdiff`. Running a compiled executable does not require Go.
+Version 1.0.0 is planned for 20 November 2026; release archives are not yet published. Once available, download `SHA256SUMS` and the archive for your platform from [GitHub Releases](https://github.com/k-dawg23/envdiff/releases):
 
-The planned initial targets are Linux amd64, Windows amd64 and macOS arm64. macOS amd64 is omitted because native verification is unavailable. Native hosted CI has passed automated tests and builds on the three planned platforms; release archives and their verification remain pending. See [the CI run](https://github.com/k-dawg23/envdiff/actions/runs/43889121549).
+- Linux amd64: `envdiff-v1.0.0-linux-amd64.tar.gz`
+- macOS arm64: `envdiff-v1.0.0-darwin-arm64.tar.gz`
+- Windows amd64: `envdiff-v1.0.0-windows-amd64.zip`
+
+Verify the archive before extracting it. In a terminal in the directory containing both downloads, use the command for your platform:
+
+```sh
+# Linux
+sha256sum --ignore-missing --check SHA256SUMS
+
+# macOS (compare the output with the matching line in SHA256SUMS)
+shasum -a 256 envdiff-v1.0.0-darwin-arm64.tar.gz
+```
+
+```powershell
+# Windows PowerShell (compare Hash with the matching line in SHA256SUMS)
+Get-FileHash .\envdiff-v1.0.0-windows-amd64.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS
+```
+
+On Linux, the selected archive should report `OK`; on macOS and Windows, compare the complete hash with its archive's entry in `SHA256SUMS`. A checksum confirms consistency with the manifest, not an independent signature or provenance attestation.
+
+Extract the archive; its top level contains `LICENSE` and `envdiff` (Linux and macOS) or `envdiff.exe` (Windows). Run `./envdiff` on Linux or macOS, or `.\envdiff.exe` in PowerShell, from the directory containing the executable. Alternatively, put the executable in a directory on your `PATH` and invoke it as `envdiff`. Running a compiled executable does not require Go.
+
+Native hosted CI tests and builds passed on Linux amd64, Windows amd64 and macOS arm64, and [release-candidate archives were verified](https://github.com/k-dawg23/envdiff/actions/runs/44064596233). These are automated checks on hosted runners, not human manual smoke tests. macOS amd64 is omitted because native verification is unavailable.
 
 ### Build from source
 
