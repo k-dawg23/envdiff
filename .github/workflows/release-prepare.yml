@@ -1,0 +1,240 @@
+name: Prepare release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (for example, 1.0.0)'
+        required: true
+        default: '1.0.0'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.11'
+  GOTOOLCHAIN: local
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  build:
+    name: Build and verify (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-amd64
+            runner_os: Linux
+            runner_arch: X64
+            goos: linux
+            goarch: amd64
+            executable: envdiff
+            extension: tar.gz
+          - runner: windows-2025
+            platform: windows-amd64
+            runner_os: Windows
+            runner_arch: X64
+            goos: windows
+            goarch: amd64
+            executable: envdiff.exe
+            extension: zip
+          - runner: macos-15
+            platform: darwin-arm64
+            runner_os: macOS
+            runner_arch: ARM64
+            goos: darwin
+            goarch: arm64
+            executable: envdiff
+            extension: tar.gz
+    steps:
+      - name: Validate version and runner
+        shell: bash
+        env:
+          EXPECTED_OS: ${{ matrix.runner_os }}
+          EXPECTED_ARCH: ${{ matrix.runner_arch }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || [ ${#RELEASE_VERSION} -gt 32 ]; then
+            echo 'Version must be a numeric major.minor.patch without leading zeros (maximum 32 characters).' >&2
+            exit 1
+          fi
+          test "$RUNNER_OS" = "$EXPECTED_OS"
+          test "$RUNNER_ARCH" = "$EXPECTED_ARCH"
+          printf 'Runner: %s %s; version: %s; source: %s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$RELEASE_VERSION" "$GITHUB_SHA"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.11'
+          cache: false
+      - name: Verify toolchain and build
+        shell: bash
+        env:
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXE: ${{ matrix.executable }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          go version
+          test "$(go env GOVERSION)" = "go$GO_VERSION"
+          test "$(go env GOHOSTOS)" = "$EXPECTED_GOOS"
+          test "$(go env GOHOSTARCH)" = "$EXPECTED_GOARCH"
+          test "$(go env GOOS)" = "$EXPECTED_GOOS"
+          test "$(go env GOARCH)" = "$EXPECTED_GOARCH"
+          mkdir package
+          go build -trimpath -ldflags "-X main.version=$RELEASE_VERSION" -o "package/$EXE" ./cmd/envdiff
+          cp LICENSE package/LICENSE
+      - name: Smoke test release executable
+        shell: bash
+        env:
+          EXE: ${{ matrix.executable }}
+        run: |
+          set -euo pipefail
+          exe="$PWD/package/$EXE"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf 'COMMON=sentinel_alpha\nCHANGE=sentinel_beta\nMISSING=sentinel_gamma\n' > "$work/reference"
+          printf 'COMMON=sentinel_alpha\nCHANGE=sentinel_delta\nADDED=sentinel_epsilon\n' > "$work/target"
+          printf 'DUP=sentinel_zeta\nDUP=sentinel_eta\n' > "$work/duplicate"
+          printf 'BAD="sentinel_theta\n' > "$work/invalid"
+          run_check() {
+            expected=$1; shift
+            set +e
+            "$exe" "$@" > "$work/out" 2> "$work/err"
+            code=$?
+            set -e
+            if [ "$code" -ne "$expected" ]; then echo "Unexpected exit code: $code (expected $expected)" >&2; exit 1; fi
+            if grep -Eiq 'sentinel_|'"$work" "$work/out" "$work/err"; then echo 'Unexpected sensitive fixture data or path in output' >&2; exit 1; fi
+            if [ "$expected" -eq 2 ]; then test ! -s "$work/out"; test -s "$work/err"; else test ! -s "$work/err"; fi
+          }
+          run_check 0 --version
+          test "$(cat "$work/out")" = "envdiff $RELEASE_VERSION"
+          run_check 0 --help
+          grep -qi 'usage' "$work/out"
+          run_check 0 compare --help
+          grep -qi 'usage' "$work/out"
+          run_check 0 compare "$work/reference" "$work/reference"
+          grep -q 'Result: No differences' "$work/out"
+          run_check 1 compare "$work/reference" "$work/target"
+          grep -q 'Result: Differences detected' "$work/out"
+          grep -q 'CHANGE' "$work/out"; grep -q 'MISSING' "$work/out"; grep -q 'ADDED' "$work/out"
+          run_check 1 compare --format json "$work/reference" "$work/target"
+          grep -Eq '"status":[[:space:]]*"differences"' "$work/out"
+          grep -q '"CHANGE"' "$work/out"; grep -q '"MISSING"' "$work/out"; grep -q '"ADDED"' "$work/out"
+          run_check 0 compare --ignore-values "$work/reference" "$work/reference"
+          grep -q 'Mode: keys_only' "$work/out"
+          printf 'CHANGE=sentinel_beta\n' > "$work/key-a"
+          printf 'CHANGE=sentinel_delta\n' > "$work/key-b"
+          run_check 0 compare --ignore-values "$work/key-a" "$work/key-b"
+          grep -q 'Result: No differences' "$work/out"
+          run_check 3 compare "$work/duplicate" "$work/duplicate"
+          grep -q 'DUP' "$work/out"; grep -q 'Duplicates detected' "$work/out"
+          run_check 2 compare "$work/reference" "$work/invalid"
+          grep -q 'target file at line 1' "$work/err"
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          archive="envdiff-v${RELEASE_VERSION}-${PLATFORM}.${EXTENSION}"
+          if [ "$RUNNER_OS" = Windows ]; then
+            powershell.exe -NoProfile -NonInteractive -Command 'Compress-Archive -LiteralPath package/envdiff.exe,package/LICENSE -DestinationPath "dist/$env:ARCHIVE"'
+          else
+            tar -czf "dist/$archive" -C package envdiff LICENSE
+          fi
+        # Passed through the environment rather than interpolated into shell code.
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXTENSION: ${{ matrix.extension }}
+          ARCHIVE: envdiff-v${{ inputs.version }}-${{ matrix.platform }}.${{ matrix.extension }}
+      - name: Inspect and verify extracted archive
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXTENSION: ${{ matrix.extension }}
+          EXE: ${{ matrix.executable }}
+        run: |
+          set -euo pipefail
+          archive="$PWD/dist/envdiff-v${RELEASE_VERSION}-${PLATFORM}.${EXTENSION}"
+          mkdir extracted
+          if [ "$RUNNER_OS" = Windows ]; then
+            powershell.exe -NoProfile -NonInteractive -Command '
+              $ErrorActionPreference = "Stop"
+              try {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $archivePath = "dist/envdiff-v$env:RELEASE_VERSION-$env:PLATFORM.$env:EXTENSION"
+                $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $archivePath).Path)
+                try {
+                  $entries = @($zip.Entries | ForEach-Object { $_.FullName })
+                  $entries | ForEach-Object { Write-Output $_ }
+                  if ($entries.Count -ne 2 -or
+                      @($entries | Where-Object { $_ -ceq "envdiff.exe" }).Count -ne 1 -or
+                      @($entries | Where-Object { $_ -ceq "LICENSE" }).Count -ne 1) {
+                    throw "Unexpected ZIP archive contents"
+                  }
+                } finally {
+                  $zip.Dispose()
+                }
+                Expand-Archive -LiteralPath $archivePath -DestinationPath extracted -Force
+              } catch {
+                [Console]::Error.WriteLine($_.Exception.Message)
+                exit 1
+              }
+            '
+          else
+            tar -tf "$archive" | sort > listing
+            printf '%s\n' LICENSE "$EXE" | sort > expected-listing
+            diff -u expected-listing listing
+            cat listing
+            tar -xf "$archive" -C extracted
+          fi
+          test -f "extracted/$EXE"; test -f extracted/LICENSE
+          if [ "$RUNNER_OS" != Windows ]; then test -x "extracted/$EXE"; fi
+          test "$("$PWD/extracted/$EXE" --version)" = "envdiff $RELEASE_VERSION"
+          printf 'KEY=synthetic\n' > extracted/fixture
+          "$PWD/extracted/$EXE" compare extracted/fixture extracted/fixture | grep -q 'Result: No differences'
+          printf 'Verified %s from commit %s with Go %s on %s/%s\n' "$(basename "$archive")" "$GITHUB_SHA" "$GO_VERSION" "$RUNNER_OS" "$RUNNER_ARCH" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verified-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate verified archives
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: verified-*
+          path: release-candidate
+          merge-multiple: true
+      - name: Verify inventory and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-candidate
+          printf '%s\n' "envdiff-v${RELEASE_VERSION}-darwin-arm64.tar.gz" "envdiff-v${RELEASE_VERSION}-linux-amd64.tar.gz" "envdiff-v${RELEASE_VERSION}-windows-amd64.zip" | sort > "$RUNNER_TEMP/expected"
+          find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort > "$RUNNER_TEMP/actual"
+          diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/actual"
+          while IFS= read -r archive; do test -f "$archive"; done < "$RUNNER_TEMP/expected"
+          sha256sum -- $(cat "$RUNNER_TEMP/expected") > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          cat SHA256SUMS
+          printf 'Release candidate v%s; source commit %s; Go %s. Archives downloaded from the three verified platform jobs in this run.\n' "$RELEASE_VERSION" "$GITHUB_SHA" "$GO_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-v${{ inputs.version }}
+          path: release-candidate/*
+          if-no-files-found: error
+          retention-days: 30
