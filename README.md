@@ -4,7 +4,7 @@ EnvDiff compares two local dotenv files without displaying their values. Use it 
 
 ## Installation
 
-Version 1.0.0 is planned for 20 November 2026; release archives are not yet published. Once available, download `SHA256SUMS` and the archive for your platform from [GitHub Releases](https://github.com/k-dawg23/envdiff/releases):
+EnvDiff v1.0.0 was released on 20 November 2026. Download `SHA256SUMS` and the archive for your platform from the [v1.0.0 GitHub Release](https://github.com/k-dawg23/envdiff/releases/tag/v1.0.0):
 
 - Linux amd64: `envdiff-v1.0.0-linux-amd64.tar.gz`
 - macOS arm64: `envdiff-v1.0.0-darwin-arm64.tar.gz`
@@ -48,7 +48,7 @@ go build -o envdiff.exe ./cmd/envdiff
 .\envdiff.exe --version
 ```
 
-A normal source build reports `envdiff dev`. To embed the planned release version, add `-ldflags '-X main.version=1.0.0'` to the build command. Place the resulting executable on `PATH` if desired.
+A normal source build reports `envdiff dev`. To embed the release version, add `-ldflags '-X main.version=1.0.0'` to the build command. Place the resulting executable on `PATH` if desired.
 
 ## Quick start
 
