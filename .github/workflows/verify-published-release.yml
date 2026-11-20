@@ -1,0 +1,87 @@
+name: Verify published release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Verify published Windows amd64
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Download and verify published binary
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:PROCESSOR_ARCHITECTURE -cne 'AMD64') {
+            throw "Unexpected runner: $env:RUNNER_OS / $env:RUNNER_ARCH / $env:PROCESSOR_ARCHITECTURE"
+          }
+          Write-Output "Runner OS: $env:RUNNER_OS; runner architecture: $env:RUNNER_ARCH; processor architecture: $env:PROCESSOR_ARCHITECTURE"
+          $base = 'https://github.com/k-dawg23/envdiff/releases/download/v1.0.0'
+          $archiveName = 'envdiff-v1.0.0-windows-amd64.zip'
+          $archiveExpected = 'afeb881412a54439b2a1e32bc4e1b8680f1325fa58a5530dec91ad2301912485'
+          $manifestExpected = 'c82739d4947705d9776de1ed3c340c4a5b15ac1cf134eef1733a4cd981987e5a'
+          $work = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $work | Out-Null
+          $archive = Join-Path $work $archiveName
+          $manifest = Join-Path $work 'SHA256SUMS'
+          Invoke-WebRequest -Uri "$base/$archiveName" -OutFile $archive
+          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest
+          $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Output "Archive SHA-256: $archiveHash"
+          Write-Output "Manifest SHA-256: $manifestHash"
+          if ($archiveHash -cne $archiveExpected -or $manifestHash -cne $manifestExpected) { throw 'Approved checksum mismatch' }
+          $entries = @(Get-Content -LiteralPath $manifest | Where-Object { $_ -ceq "$archiveExpected  $archiveName" })
+          if ($entries.Count -ne 1) { throw 'Manifest entry missing or incorrect' }
+          Write-Output 'Approved hashes and manifest entry verified.'
+          $extracted = Join-Path $work 'extracted'
+          Expand-Archive -LiteralPath $archive -DestinationPath $extracted
+          $exe = Join-Path $extracted 'envdiff.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $extracted 'LICENSE') -PathType Leaf)) { throw 'Executable or LICENSE missing' }
+          $output = @(& $exe --version)
+          $exitCode = $LASTEXITCODE
+          Write-Output "Version output: $($output -join ' | '); exit code: $exitCode"
+          if ($exitCode -ne 0 -or $output.Count -ne 1 -or $output[0] -cne 'envdiff 1.0.0') { throw 'Incorrect executable version or exit code' }
+          Write-Output 'Published Windows amd64 verification passed.'
+
+  macos:
+    name: Verify published macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Download and verify published binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = macOS
+          test "$RUNNER_ARCH" = ARM64
+          test "$(uname -m)" = arm64
+          printf 'Runner OS: %s; runner architecture: %s; uname architecture: %s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$(uname -m)"
+          base='https://github.com/k-dawg23/envdiff/releases/download/v1.0.0'
+          archive_name='envdiff-v1.0.0-darwin-arm64.tar.gz'
+          archive_expected='6adbdb9dcbb34751759c0c156ef124c84e3f0b7a78223c04025b8c5961844ffa'
+          manifest_expected='c82739d4947705d9776de1ed3c340c4a5b15ac1cf134eef1733a4cd981987e5a'
+          work="$(mktemp -d "${RUNNER_TEMP}/envdiff-published.XXXXXX")"
+          curl --fail --location --silent --show-error "$base/$archive_name" --output "$work/$archive_name"
+          curl --fail --location --silent --show-error "$base/SHA256SUMS" --output "$work/SHA256SUMS"
+          archive_hash="$(shasum -a 256 "$work/$archive_name" | awk '{print $1}')"
+          manifest_hash="$(shasum -a 256 "$work/SHA256SUMS" | awk '{print $1}')"
+          printf 'Archive SHA-256: %s\nManifest SHA-256: %s\n' "$archive_hash" "$manifest_hash"
+          test "$archive_hash" = "$archive_expected"
+          test "$manifest_hash" = "$manifest_expected"
+          test "$(grep -Fxc "$archive_expected  $archive_name" "$work/SHA256SUMS")" = 1
+          echo 'Approved hashes and manifest entry verified.'
+          mkdir "$work/extracted"
+          tar -xzf "$work/$archive_name" -C "$work/extracted"
+          test -f "$work/extracted/envdiff"
+          test -x "$work/extracted/envdiff"
+          test -f "$work/extracted/LICENSE"
+          output="$("$work/extracted/envdiff" --version)"
+          printf 'Version output: %s; exit code: 0\n' "$output"
+          test "$output" = 'envdiff 1.0.0'
+          echo 'Published macOS arm64 verification passed.'
